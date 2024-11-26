@@ -1,0 +1,120 @@
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f0f0f0;
+    color: #333;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+}
+
+#game-container {
+    text-align: center;
+    background: #ffffff;
+    padding: 20px;
+    border-radius: 10px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+#boards {
+    display: flex;
+    justify-content: space-between;
+    margin: 40px 0;
+}
+
+.board-container {
+    width: 45%;
+}
+
+.board {
+    display: grid;
+    grid-template-columns: repeat(5, 50px);
+    gap: 5px;
+}
+
+.board div {
+    width: 50px;
+    height: 50px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    font-size: 18px;
+    font-weight: bold;
+    text-transform: uppercase;
+}
+
+.correct {
+    background-color: #6aaa64; /* Verde */
+    color: white;
+}
+
+.misplaced {
+    background-color: #c9b458; /* Amarelo */
+    color: white;
+}
+
+.absent {
+    background-color: #787c7e; /* Cinza */
+    color: white;
+}
+
+#controls {
+    margin-top: 20px;
+}
+
+#guess-input {
+    padding: 10px;
+    font-size: 16px;
+    width: 60%;
+    margin-right: 10px;
+}
+
+button {
+    padding: 10px 20px;
+    font-size: 16px;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+button:hover {
+    background-color: #0056b3;
+}
+
+#status {
+    margin-top: 20px;
+    font-size: 14px;
+    color: #555;
+}
+
+.cell {
+    width: 40px;
+    height: 40px;
+    border: 1px solid black;
+    display: inline-block;
+    text-align: center;
+    line-height: 40px;
+    font-size: 18px;
+    font-weight: bold;
+}
+
+.cell.correct {
+    background-color: green;
+    color: white;
+}
+
+.cell.misplaced {
+    background-color: yellow;
+    color: black;
+}
+
+.cell.absent {
+    background-color: gray;
+    color: white;
+}
