@@ -16,125 +16,155 @@ import java.util.Map;
 
 @Service
 public class GameService {
-
-    private final Game game = new Game();
+    private Game game = new Game();
     private final Map<String, WebSocketSession> sessions = new HashMap<>();
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private int playerReadyCount = 0;
 
-    // Conecta um jogador ao jogo
     public void connectPlayer(WebSocketSession session) throws Exception {
         if (sessions.size() < 2) {
             sessions.put(session.getId(), session);
-            String placeholderWord = "guess"; // Palavra padrão até que o jogador configure a sua
-            boolean playerAdded = game.addPlayer(session.getId(), placeholderWord);
+            game.addPlayer(session.getId(), "");
 
-            if (playerAdded) {
-                session.sendMessage(new TextMessage("{\"status\":\"waiting\", \"message\":\"Aguardando outro jogador...\"}"));
-            } else {
-                session.sendMessage(new TextMessage("{\"status\":\"error\", \"message\":\"Erro ao adicionar jogador.\"}"));
-                session.close();
-            }
+            session.sendMessage(new TextMessage(
+                    jsonMessage("waiting", "Waiting for another player...")
+            ));
 
             if (sessions.size() == 2) {
-                // Notifica todos os jogadores que o jogo pode começar
-                for (WebSocketSession playerSession : sessions.values()) {
-                    playerSession.sendMessage(new TextMessage("{\"status\":\"start\", \"message\":\"O jogo começou! Configure sua palavra.\"}"));
-                }
+                broadcastMessage("start", "Game is ready. Set your words!");
             }
-
         } else {
-            // Fecha a conexão se a sala estiver cheia
-            session.sendMessage(new TextMessage("{\"status\":\"error\", \"message\":\"Sala cheia.\"}"));
+            session.sendMessage(new TextMessage(
+                    jsonMessage("error", "Game room is full")
+            ));
             session.close();
         }
-
     }
 
-    // Desconecta um jogador
+    public void processAction(WebSocketSession session, MessageDTO message) throws Exception {
+        if (game.isGameOver()) {
+            session.sendMessage(new TextMessage(
+                    jsonMessage("error", "Game is already over")
+            ));
+            return;
+        }
+
+        if (message.getType().equals("set_word")) {
+            handleWordSetting(session, message.getWord());
+        } else if (message.getType().equals("guess")) {
+            handleGuess(session, message.getWord());
+        }
+    }
+
+    private void handleWordSetting(WebSocketSession session, String word) throws Exception {
+        if (word.length() != 5) {
+            session.sendMessage(new TextMessage(
+                    jsonMessage("error", "Word must be 5 characters long")
+            ));
+            return;
+        }
+
+        Player player = game.getPlayer(session.getId());
+        player.setWord(word);
+        playerReadyCount++;
+
+        if (playerReadyCount == 2) {
+            broadcastMessage("game_ready", "Both players are ready. Start guessing!");
+        }
+    }
+
+    private void handleGuess(WebSocketSession session, String guessedWord) throws Exception {
+        Player currentPlayer = game.getPlayer(session.getId());
+        Player opponentPlayer = game.getOpponent(session.getId());
+
+        List<WordCheckResult> result = game.checkWord(guessedWord, opponentPlayer.getWord());
+        
+        session.sendMessage(new TextMessage(
+                String.format("{\"status\":\"guess_result\", \"message\":%s}",
+                        objectMapper.writeValueAsString(result))
+        ));
+
+        WebSocketSession opponentSession = sessions.get(opponentPlayer.getSessionId());
+        if (opponentSession != null) {
+            opponentSession.sendMessage(new TextMessage(
+                    String.format("{\"status\":\"opponent_guess\", \"message\":%s}",
+                            objectMapper.writeValueAsString(result))
+            ));
+        }
+
+        if (opponentPlayer.getWord().equalsIgnoreCase(guessedWord)) {
+            handleGameEnd(currentPlayer, opponentPlayer);
+        }
+    }
+
+
+
+    private void handleGameEnd(Player winner, Player loser) throws Exception {
+        game.setGameOver(true);
+
+        WebSocketSession winnerSession = sessions.get(winner.getSessionId());
+        WebSocketSession loserSession = sessions.get(loser.getSessionId());
+
+        if (winnerSession != null) {
+            winnerSession.sendMessage(new TextMessage(
+                    jsonMessage("win", "Congratulations! You won the game!")
+            ));
+        }
+
+        if (loserSession != null) {
+            loserSession.sendMessage(new TextMessage(
+                    jsonMessage("lose", "Sorry, you lost the game.")
+            ));
+        }
+
+        closeGame();
+    }
+
     public void disconnectPlayer(WebSocketSession session) throws Exception {
+        if (!sessions.containsKey(session.getId())) {
+            return;
+        }
+
         Player opponent = game.getOpponent(session.getId());
         sessions.remove(session.getId());
 
         if (opponent != null) {
             WebSocketSession opponentSession = sessions.get(opponent.getSessionId());
             if (opponentSession != null) {
-                opponentSession.sendMessage(new TextMessage("{\"status\":\"win\", \"message\":\"O outro jogador saiu. Você venceu!\"}"));
+                opponentSession.sendMessage(new TextMessage(
+                        jsonMessage("opponent_left", "Your opponent left. You won!")
+                ));
                 opponentSession.close();
             }
         }
 
         session.close();
-
-        // Finaliza o jogo se não houver mais jogadores
-        if (sessions.isEmpty()) {
-            closeGame();
-        }
-    }
-
-    public void processAction(WebSocketSession session, MessageDTO message) throws Exception {
-
-        System.out.println("Processando ação de " + session.getId() + ": " + message);
-
-        if (game.isGameOver()) {
-            System.out.println("Jogo já encerrado. Ignorando ação.");
-            session.sendMessage(new TextMessage( "{\"status\":\"error\", \"message\":\"O jogo já foi encerrado.\"}"));
-            return;
-        }
-
-        Player player = game.getPlayer(session.getId());
-        Player opponent = game.getOpponent(session.getId());
-
-        if (player == null) {
-            if (session.isOpen()) {
-                session.sendMessage(new TextMessage("{\"status\":\"error\", \"message\":\"Jogador não encontrado.\"}"));
-            }
-            return;
-        }
-
-        if ("guess".equals(message.getType())) {
-            String guessedWord = message.getWord();
-            List<WordCheckResult> result = game.checkWord(guessedWord, opponent.getWord());
-
-            // Envia o resultado ao jogador atual
-            if (session.isOpen()) {
-                session.sendMessage(new TextMessage(objectMapper.writeValueAsString(result)));
-            }
-
-            // Verifica vitória
-            if (opponent.getWord().equals(guessedWord)) {
-                player.setWon(true);
-                game.setGameOver(true);
-
-                if (session.isOpen()) {
-                    session.sendMessage(new TextMessage("{\"status\":\"win\", \"message\":\"Você venceu!\"}"));
-                }
-
-                WebSocketSession opponentSession = sessions.get(opponent.getSessionId());
-                if (opponentSession != null && opponentSession.isOpen()) {
-                    opponentSession.sendMessage(new TextMessage("{\"status\":\"lose\", \"message\":\"Você perdeu!\"}"));
-                }
-
-                closeGame();
-            }
-        }
+        closeGame();
     }
 
     private void closeGame() {
-        System.out.println("Encerrando o jogo...");
-        game.setGameOver(true);
+        game = new Game();
+        sessions.clear();
+        playerReadyCount = 0;
+    }
+
+    private void broadcastMessage(String status, Object message) throws IOException {
+        String messageJson;
+        if (message instanceof String) {
+            messageJson = String.format("\"%s\"", ((String) message).replace("\"", "\\\""));
+        } else {
+            messageJson = objectMapper.writeValueAsString(message);
+        }
+
+        String finalMessage = String.format("{\"status\":\"%s\", \"message\":%s}", status, messageJson);
 
         for (WebSocketSession session : sessions.values()) {
-            if (session.isOpen()) {
-                System.out.println("Encerrando sessão: " + session.getId());
-                try {
-                    session.sendMessage(new TextMessage("{\"status\":\"game_over\", \"message\":\"O jogo foi encerrado.\"}"));
-                    session.close();
-                } catch (IOException e) {
-                    System.out.println("Erro ao encerrar sessão " + session.getId() + ": " + e.getMessage());
-                }
-            }
+            session.sendMessage(new TextMessage(finalMessage));
         }
-        sessions.clear();
-        System.out.println("Todas as sessões foram encerradas.");
+    }
+
+
+    private String jsonMessage(String status, String message) {
+        return String.format("{\"status\":\"%s\", \"message\":\"%s\"}", status, message);
     }
 }

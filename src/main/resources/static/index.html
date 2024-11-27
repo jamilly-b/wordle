@@ -1,31 +1,256 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Wordle</title>
-    <link rel="stylesheet" href="style.css">
+    <title>Competitive Wordle</title>
+    <style>
+        .game-container {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 20px;
+        }
+        .board {
+            display: grid;
+            grid-template-rows: repeat(6, 1fr);
+            gap: 5px;
+            width: 300px;
+        }
+        .board-row {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 5px;
+        }
+        .cell {
+            width: 50px;
+            height: 50px;
+            border: 2px solid #ccc;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 24px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+        .cell.empty {
+            background-color: white;
+            border-color: #ccc;
+        }
+        .cell.correct {
+            background-color: #6aaa64;
+            color: white;
+            border-color: #6aaa64;
+        }
+        .cell.misplaced {
+            background-color: #c9b458;
+            color: white;
+            border-color: #c9b458;
+        }
+        .cell.absent {
+            background-color: #787c7e;
+            color: white;
+            border-color: #787c7e;
+        }
+    </style>
 </head>
 <body>
-<div id="game-container">
-    <h1>Wordle</h1>
-    <div id="boards">
-        <div class="board-container">
-            <h2>Você</h2>
-            <div id="player-board" class="board"></div>
-        </div>
-        <div class="board-container">
-            <h2>Oponente</h2>
-            <div id="opponent-board" class="board"></div>
-        </div>
-    </div>
-    <div id="controls">
-        <input type="text" id="guess-input" placeholder="Digite uma palavra" maxlength="5">
-        <button id="send-guess">Enviar</button>
-        <button id="connect">Conectar</button>
-    </div>
-    <div id="status"></div>
+<div id="status">Disconnected</div>
+<button id="connect">Connect</button>
+
+<div>
+    <label>Set your secret word:</label>
+    <input type="text" id="word-input" maxlength="5" disabled>
+    <button id="set-word" disabled>Set Word</button>
 </div>
-<script src="game.js"></script>
+
+<div class="game-container">
+    <div>
+        <h3>Your Board</h3>
+        <div id="player-board" class="board"></div>
+    </div>
+    <div>
+        <h3>Opponent's Board</h3>
+        <div id="opponent-board" class="board"></div>
+    </div>
+</div>
+
+<div>
+    <label>Make a guess:</label>
+    <input type="text" id="guess-input" maxlength="5" disabled>
+    <button id="send-guess" disabled>Send Guess</button>
+</div>
+
+<script>
+    const playerBoard = document.getElementById("player-board");
+    const opponentBoard = document.getElementById("opponent-board");
+    const guessInput = document.getElementById("guess-input");
+    const wordInput = document.getElementById("word-input");
+    const sendGuessButton = document.getElementById("send-guess");
+    const setWordButton = document.getElementById("set-word");
+    const connectButton = document.getElementById("connect");
+    const statusDiv = document.getElementById("status");
+
+    let socket;
+    let isConnected = false;
+    let currentPlayerRow = 0;
+    let currentOpponentRow = 0;
+
+    function createBoard(board) {
+        board.innerHTML = "";
+        for (let i = 0; i < 6; i++) {
+            const row = document.createElement("div");
+            row.className = "board-row";
+            for (let j = 0; j < 5; j++) {
+                const cell = document.createElement("div");
+                cell.className = "cell empty";
+                row.appendChild(cell);
+            }
+            board.appendChild(row);
+        }
+    }
+
+    function updateBoard(board, result, rowIndex) {
+        const rows = board.querySelectorAll(".board-row");
+        const row = rows[rowIndex];
+        const cells = row.querySelectorAll(".cell");
+
+        // If result is an array of objects with letter and status
+        if (Array.isArray(result) && result[0] && result[0].letter) {
+            result.forEach((res, index) => {
+                cells[index].textContent = res.letter.toUpperCase();
+                cells[index].className = `cell ${res.status}`;
+            });
+        }
+        // If result is a simple array or string
+        else {
+            const resultArray = typeof result === 'string' ? result.split('') : result;
+            resultArray.forEach((letter, index) => {
+                cells[index].textContent = letter.toUpperCase();
+                cells[index].className = `cell empty`;
+            });
+        }
+    }
+
+    function resetGame() {
+        currentPlayerRow = 0;
+        currentOpponentRow = 0;
+        createBoard(playerBoard);
+        createBoard(opponentBoard);
+    }
+
+    connectButton.addEventListener("click", () => {
+        if (isConnected) {
+            socket.close();
+            return;
+        }
+
+        socket = new WebSocket("ws://localhost:8080/game");
+
+        socket.onopen = () => {
+            isConnected = true;
+            connectButton.textContent = "Exit";
+            statusDiv.textContent = "Waiting for another player...";
+        };
+
+        socket.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                console.log("Raw data received:", event.data);
+
+                switch(data.status) {
+                    case "start":
+                        statusDiv.textContent = "Game started! Set your secret word.";
+                        wordInput.disabled = false;
+                        setWordButton.disabled = false;
+                        resetGame();
+                        break;
+                    case "game_ready":
+                        statusDiv.textContent = "Both players ready. Start guessing!";
+                        guessInput.disabled = false;
+                        sendGuessButton.disabled = false;
+                        break;
+                    case "guess_result":
+                        if (data.message) {
+                        console.log("Updating player board:", data.message);
+                        updateBoard(playerBoard, data.message, currentPlayerRow);
+                        currentPlayerRow++;
+                        } else {
+                            console.warn("No message data for guess_result");
+                        }
+                        break;
+                    case "opponent_guess":
+                        updateBoard(opponentBoard, data.message, currentOpponentRow);
+                        currentOpponentRow++;
+                        break;
+                    case "win":
+                        statusDiv.textContent = "You won the game!";
+                        disableAllInteractions();
+                        break;
+                    case "lose":
+                        statusDiv.textContent = "You lost the game!";
+                        disableAllInteractions();
+                        break;
+                    case "opponent_left":
+                        statusDiv.textContent = "Your opponent left. You won!";
+                        disableAllInteractions();
+                        break;
+                }
+            } catch (error) {
+                console.error("Error parsing JSON:", error, "Raw data:", event.data);
+            }
+        };
+
+        socket.onclose = (event) => {
+            if (!isConnected) return;
+
+            statusDiv.textContent = event.wasClean
+                ? "Connection closed normally"
+                : "Connection lost. Your opponent might have left.";
+
+            connectButton.textContent = "Connect";
+            isConnected = false;
+            disableAllInteractions();
+        };
+    });
+
+    setWordButton.addEventListener("click", () => {
+        const word = wordInput.value.trim().toLowerCase();
+        if (word.length !== 5) {
+            alert("Word must be 5 characters long!");
+            return;
+        }
+
+        socket.send(JSON.stringify({
+            type: "set_word",
+            word: word
+        }));
+
+        wordInput.disabled = true;
+        setWordButton.disabled = true;
+    });
+
+    sendGuessButton.addEventListener("click", () => {
+        const guessedWord = guessInput.value.trim().toLowerCase();
+        if (guessedWord.length !== 5) {
+            alert("Word must be 5 characters long!");
+            return;
+        }
+
+        socket.send(JSON.stringify({
+            type: "guess",
+            word: guessedWord
+        }));
+
+        guessInput.value = "";
+    });
+
+    function disableAllInteractions() {
+        guessInput.disabled = true;
+        sendGuessButton.disabled = true;
+        wordInput.disabled = true;
+        setWordButton.disabled = true;
+    }
+
+    createBoard(playerBoard);
+    createBoard(opponentBoard);
+</script>
 </body>
 </html>
